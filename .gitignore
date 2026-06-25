@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+# 归档数据为用户本地数据，不进仓库
+research-archive.md
+*.snapshot.json

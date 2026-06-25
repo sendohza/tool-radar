@@ -1,0 +1,7 @@
+interface:
+  display_name: "Tool Radar"
+  short_description: "调研同类工具并评分排名，按场景推荐并累积归档榜单"
+  brand_color: "#0EA5E9"
+  default_prompt: "Use $tool-radar to find similar tools, deep-dive each, score and rank them, then recommend by scenario."
+policy:
+  allow_implicit_invocation: true
