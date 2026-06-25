@@ -22,6 +22,8 @@ SCAN_DIRS = [
     r"D:\codex-skills",
     os.path.join(os.path.expanduser("~"), ".codex", "plugins", "cache"),
 ]
+import subprocess
+import shutil
 
 
 def collect_local_skills():
@@ -50,6 +52,44 @@ def collect_local_skills():
     return found
 
 
+def _run(cmd, timeout=15):
+    try:
+        out = subprocess.run(cmd, capture_output=True, encoding="utf-8",
+                             errors="replace", timeout=timeout, shell=True)
+        return out.stdout or ""
+    except Exception:
+        return ""
+
+
+def collect_system_cli():
+    """扫描 PATH / pip 全局包 / npm 全局包，返回 {name: source}。"""
+    found = {}
+    # PATH 可执行文件名（候选 token 的常见变体）
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if not d or not os.path.isdir(d):
+            continue
+        try:
+            for f in os.listdir(d):
+                lp = f.lower()
+                if lp.endswith((".exe", ".cmd", ".bat", ".ps1")):
+                    found[lp.rsplit(".", 1)[0]] = ("path", os.path.join(d, f))
+        except Exception:
+            continue
+    # pip 全局包
+    for line in _run("pip list --format=freeze 2>nul").splitlines():
+        n = line.split("==")[0].strip().lower()
+        if n:
+            found[n] = ("pip", n)
+    # npm 全局包
+    for line in _run("npm ls -g --depth=0 2>nul").splitlines():
+        m = line.strip()
+        if m.startswith("+--") or m.startswith("`--"):
+            n = m.lstrip("+`- ").split("@")[0].strip().lower()
+            if n:
+                found[n] = ("npm", n)
+    return found
+
+
 def match(candidates, local):
     """候选（owner/repo 末段）与本地 skill 目录名精确边界匹配，避免子串误报。"""
     hits = []
@@ -70,16 +110,41 @@ def match(candidates, local):
     return hits
 
 
+def match_cli(candidates, system_cli):
+    """候选 token 与系统 CLI 包名匹配（normalize 去 - _ 后比较）。"""
+    def norm(x):
+        return x.lower().replace("-", "").replace("_", "").replace(".", "")
+    hits = []
+    normed = {norm(k): (k, v) for k, v in system_cli.items()}
+    for c in candidates:
+        token = norm(c.split("/")[-1])
+        if len(token) < 5:
+            continue
+        for nk, (orig, (src, where)) in normed.items():
+            if token == nk or nk.endswith(token) or token.endswith(nk):
+                hits.append({"candidate": c, "system_cli": orig,
+                             "source": src, "where": where})
+    return hits
+
+
 def main():
     candidates = sys.argv[1:]
     local = collect_local_skills()
     hits = match(candidates, local)
+    system_cli = collect_system_cli()
+    cli_hits = match_cli(candidates, system_cli)
     total = len(local)
-    if hits:
-        note = "本机已安装 %d 个 skill，其中与候选匹配 %d 个（见 installed 列表）" % (total, len(hits))
+    cli_total = len(system_cli)
+    if hits or cli_hits:
+        note = ("本机已安装 %d 个 skill + %d 个系统 CLI（PATH/pip/npm），"
+                "其中与候选匹配 skill %d 个、CLI %d 个（见 installed/system_cli 列表）"
+                % (total, cli_total, len(hits), len(cli_hits)))
     else:
-        note = "本机已安装 %d 个 skill，未发现与本次候选直接匹配的项目（候选均未本地安装）" % total
-    result = {"installed": hits, "local_total": total, "note": note}
+        note = ("本机已安装 %d 个 skill + %d 个系统 CLI（PATH/pip/npm），"
+                "未发现与本次候选匹配的项目（候选均未本地安装）"
+                % (total, cli_total))
+    result = {"installed": hits, "system_cli": cli_hits,
+              "local_total": total, "cli_total": cli_total, "note": note}
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
